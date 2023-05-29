@@ -169,7 +169,7 @@ class PropensityStartaficationPropensity():
 
 
             # dictionary : key - node index , value - fitted model 
-            # this dictionary will be a atribute of BecauseTree class
+            # this dictionary will be a atribute of BIcauseTree class
             node_models[node] = deepcopy(model)
 
         self.node_models_ =  node_models
@@ -203,7 +203,7 @@ class PropensityStartaficationPropensity():
         
         return all_df
 
-class BecauseTree(IndividualOutcomeEstimator):
+class BICauseTree(IndividualOutcomeEstimator):
 
     def __init__(
         self,
@@ -326,7 +326,7 @@ class BecauseTree(IndividualOutcomeEstimator):
                 model = self.outcome_model.fit(current_node_X, current_node_a, current_node_y) 
 
             # dictionary : key - node index , value - fitted model 
-            # this dictionary will be a atribute of BecauseTree class
+            # this dictionary will be a atribute of BICauseTree class
             node_models[node] = deepcopy(model)
 
         self.node_models_ =  node_models   
