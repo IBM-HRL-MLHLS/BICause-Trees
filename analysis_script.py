@@ -275,8 +275,10 @@ def compute_filtered_effect(X, a, y, bootstrap_matrix, positivity_matrix, fitted
     return filtered_effects
 
 
-def box_plot_effect_difference(models_to_compare: dict, effects: list, plot_matching=True, plot_causal_tree=True,
-                               plot_test=True, path=None):
+def box_plot_effect_difference_data(
+    models_to_compare: dict,
+    effects: list,
+):
     ground_truth_index = list(models_to_compare.keys()).index("Ground truth")
     ground_truth_bootstrap_effects = []
     differences = effects
@@ -291,10 +293,19 @@ def box_plot_effect_difference(models_to_compare: dict, effects: list, plot_matc
     model_names = list(models_to_compare.keys())
     model_names.remove("Ground truth")
     columns_tuples = list(itertools.product(model_names, ["Train", "Test"]))
-    fig, ax = plt.subplots()
     effects_tp = pd.DataFrame(differences, columns=pd.MultiIndex.from_tuples(columns_tuples, names=["Model", "Phase"]))
     data = effects_tp.stack().stack().reset_index(level=[1, 2]).rename(columns={0: "Estimated ATE"})
+    return data
 
+
+def box_plot_effect_difference_plot(
+    data: pd.DataFrame,
+    plot_matching=True,
+    plot_causal_tree=True,
+    plot_test=True,
+    path=None
+):
+    fig, ax = plt.subplots()
     if not plot_test:
         data = data[data['Phase'] != "Test"]
     ax = sns.boxplot(data=data, y="Model", x="Estimated ATE", hue="Phase", ax=ax)
