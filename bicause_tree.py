@@ -549,7 +549,7 @@ class PropensityImbalanceStratification(PopulationOutcomeEstimator):
         """
         x_uniq = self._get_uniq_values(x)
         pvals = [self._fisher_test_pval(x, a, x_val) for x_val in x_uniq]
-        pvals = pd.Series(pvals, index=x_uniq).dropna()
+        pvals = pd.Series(pvals, index=x_uniq, dtype=float).dropna()
         if len(pvals) == 0:
             return np.nan
         self.pval_ = pvals.min()
