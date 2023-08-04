@@ -323,6 +323,28 @@ def box_plot_effect_difference_plot(
 
     return fig
 
+
+def box_plot_effect_difference(
+    models_to_compare: dict,
+    effects: list,
+    plot_matching=True,
+    plot_causal_tree=True,
+    plot_test=True,
+    path=None
+):
+    plot_data = box_plot_effect_difference_data(
+        models_to_compare, effects,
+    )
+    fig = box_plot_effect_difference_plot(
+        plot_data,
+        plot_matching=plot_matching,
+        plot_causal_tree=plot_causal_tree,
+        plot_test=plot_test,
+        path=path,
+    )
+    return fig
+
+
 def compute_jaccard_rand_score(X, bootstrap_matrix, tree_fitted_models, path=None):
 
     all_rand_scores, all_jacc_scores = {}, {}
