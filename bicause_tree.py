@@ -279,6 +279,7 @@ class BICauseTree(IndividualOutcomeEstimator):
         n_values=50,
         multiple_hypothesis_test_alpha=0.1,
         multiple_hypothesis_test_method='holm',
+        split_on_random_feature=False,
         positivity_filtering_kwargs={'alpha':0.1},
         stopping_criterion=default_stopping_criterion,
         positivity_filtering_method=prevalence_symmetric,
@@ -298,7 +299,8 @@ class BICauseTree(IndividualOutcomeEstimator):
                                                         min_treat_group_size=min_treat_group_size,
                                                         asmd_threshold_split=asmd_threshold_split,
                                                         positivity_filtering_method=positivity_filtering_method,
-                                                        positivity_filtering_kwargs=positivity_filtering_kwargs
+                                                        positivity_filtering_kwargs=positivity_filtering_kwargs,
+                                                      split_on_random_feature=split_on_random_feature,
                                                         ) 
         self.individual = individual
 
@@ -424,6 +426,7 @@ class PropensityImbalanceStratification(PopulationOutcomeEstimator):
         asmd_violation_threshold=0.1,
         max_depth=10,
         n_values=50,
+        split_on_random_feature=False,
         multiple_hypothesis_test_alpha=0.1,
         multiple_hypothesis_test_method='holm',
         positivity_filtering_kwargs=None,
@@ -467,6 +470,7 @@ class PropensityImbalanceStratification(PopulationOutcomeEstimator):
         self.keep_=False
         self.potential_outcomes_ = None
         self.violating_nodes = None
+        self.split_on_random_feature = split_on_random_feature
 
     def fit(self, X: pd.DataFrame, a: pd.Series):
         """
@@ -511,7 +515,11 @@ class PropensityImbalanceStratification(PopulationOutcomeEstimator):
         self.node_sample_size_=len(a)
         treatment_values = get_iterable_treatment_values(None, a)
         if not self.stopping_criterion(self, X, a):
-            self.split_feature_ = asmds.idxmax()
+            if self.split_on_random_feature:
+                self.split_feature_ = asmds.sample(n=1).index[0]
+                self.max_feature_asmd_ = asmds.loc[self.split_feature_]  # TODO: or just keep the max?
+            else:
+                self.split_feature_ = asmds.idxmax()
             self.split_value_ = self._find_split_value(X[self.split_feature_], a)
             # TODO: This method can be plugged-in to use other heuristics
             if np.isnan(self.split_value_):
