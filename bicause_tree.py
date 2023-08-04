@@ -18,7 +18,6 @@ Created on Oct 26, 2021
 """
 from collections import deque
 from copy import deepcopy
-from causallib.estimation.base_weight import crump_cutoff, prevalence_symmetric_cutoff
 import numpy as np
 import pandas as pd
 from statsmodels.stats.multitest import multipletests
@@ -27,8 +26,8 @@ import warnings
 from sklearn.dummy import DummyClassifier
 
 from causallib.utils.general_tools import get_iterable_treatment_values
-from .base_estimator import PopulationOutcomeEstimator, IndividualOutcomeEstimator
-from .marginal_outcome import MarginalOutcomeEstimator
+from causallib.estimation.base_estimator import PopulationOutcomeEstimator, IndividualOutcomeEstimator
+from causallib.estimation.marginal_outcome import MarginalOutcomeEstimator
 
 
 
@@ -58,6 +57,32 @@ def default_stopping_criterion(tree, X: pd.DataFrame, a: pd.Series):
 
     return criteria
 
+
+def prevalence_symmetric_cutoff(prob, mu, alpha=0.1):
+    """
+    Computes a lower/upper cutoff based on the prevalence of
+    treatment in the cohort. Treatment should be binary.
+
+    Args:
+        mu (float): observed prevalence of treatment in the cohort
+        prob (pd.DataFrame): probability to be assigned to a group
+                          (n_samples, 2)
+                          For binary treatment each row is (1-p, p)
+        alpha (float): the fixed cutoff to be transformed, should be
+        strictly between 0 and 1
+
+    Returns: Tuple[float, float]: upper and lower cutoff
+    """
+    if prob.shape[1] > 2:
+        raise ValueError('This threshold selection method is applicable only '
+                         'for binary treatment assignment')
+    if not 0 < alpha < 1:
+        raise ValueError(f"`alpha` value should be in the open interval (0, 1). Got {alpha} instead.")
+    upper_cutoff = (1 - alpha)*mu / ((1-alpha)*mu + alpha*(1 - mu))
+    lower_cutoff = alpha*mu / (alpha*mu + (1 - alpha)*(1 - mu))
+    return lower_cutoff, upper_cutoff
+
+
 def prevalence_symmetric(tree, alpha=0.1):
 
     """
@@ -84,6 +109,42 @@ def prevalence_symmetric(tree, alpha=0.1):
     lower_cutoff, upper_cutoff= cutoffs[0], cutoffs[1]
     non_violating_nodes = leaf_summary['node_index'][leaf_summary['pscore'].between(lower_cutoff,upper_cutoff)].tolist()
     return non_violating_nodes
+
+
+def crump_cutoff(prob, segments=10000 ):
+    """
+    A systematic approach to find the optimal trimming cutoff, based on the
+    marginal distribution of the propensity score,
+    and according to a variance minimization criterion.
+    "Crump, R. K., Hotz, V. J., Imbens, G. W., & Mitnik, O. A. (2009).
+    Dealing with limited overlap in estimation of average treatment effects."
+    Treatment should be binary.
+    Args:
+        prob (pd.DataFrame): probability to be assigned to a group
+                          (n_samples, 2)
+        segments (int): number of exclusive segments of the interval (0, 0.5].
+                        more segments results with more precise cutoff
+    Returns:
+        float: the optimal cutoff,
+               i.e. the smallest value that satisfies the criterion.
+    """
+    # TODO: rethink input - probability_matrix, propensity_vector, or model + data
+    if prob.shape[1] > 2:
+        raise ValueError('This threshold selection method is applicable only '
+                         'for binary treatment assignment')
+    else:
+        propensities = prob.iloc[:, 1]
+
+    alphas = np.linspace(1e-7, 0.5, segments)
+    alphas_weights = alphas * (1 - alphas)
+    overlap_weights = propensities * (1 - propensities)
+    for i in range(segments):
+        obs_meets_criterion = overlap_weights >= alphas_weights[i]
+        criterion = 2 * (np.sum(obs_meets_criterion / overlap_weights) /
+                         np.maximum(np.sum(obs_meets_criterion), 1e-7))
+        if (1 / alphas_weights[i]) <= criterion:
+            return alphas[i], 1-alphas[i]
+    return None, None  # No overlap
 
 
 def crump(tree, segments=10000):

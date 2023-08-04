@@ -14,7 +14,7 @@ import seaborn as sns
 import seaborn.objects as so
 import numpy as np
 from causallib.estimation import IPW, MarginalOutcomeEstimator
-from bicause_tree import BecauseTree, PropensityImbalanceStratification, \
+from bicause_tree import BICauseTree, PropensityImbalanceStratification, \
     PropensityStartaficationPropensity, crump, prevalence_symmetric
 from sklearn.metrics.cluster import adjusted_rand_score
 from sklearn.metrics import jaccard_score, brier_score_loss, roc_auc_score, mean_squared_error,\
@@ -28,7 +28,7 @@ from sklearn.calibration import calibration_curve
 import statsmodels.api as sm
 from scipy.interpolate import interp1d
 import seaborn.objects as so
-from causallib.evaluation.weight_evaluator import calculate_covariate_balance
+from causallib.metrics.weight_metrics import calculate_covariate_balance
 
 
 def get_data(dataset):
@@ -93,7 +93,7 @@ def compare_fit_effect(models_to_compare:dict, train_test_data):
         if not is_ground_truth:
             model_copy = deepcopy(model)
             model_copy.fit(*train_data)
-            if isinstance(model_copy, BecauseTree):
+            if isinstance(model_copy, BICauseTree):
                 propensity_model = PropensityStartaficationPropensity()
                 propensity_model.tree = model_copy.tree
                 propensity_model.fit_treatment_models(train_data[0], train_data[1])
@@ -186,7 +186,7 @@ def filter_results_by_positivity_violation(positivity_boot_mask, bootstrap_resul
 
 def compute_pscore(X, model):
 
-    if isinstance(model, BecauseTree):
+    if isinstance(model, BICauseTree):
         probas = model.propensity_model.predict_proba(X)[:,1]
     if isinstance(model, IPW):
         probas = model.compute_propensity(X, a=None, treatment_values=1)
@@ -372,7 +372,7 @@ def generate_bias(X, t, y, y1, y0, bootstrap_matrix, tree_model, on_train=True):
 def generate_bias_across_depth(X, t, y, y1, y0, bootstrap_matrix, model_depths, n_feat_to_plot=10, on_train=True, path=None):
     bias = {}
     for depth in [0] + model_depths:
-        tree_model = BecauseTree(
+        tree_model = BICauseTree(
             max_depth=depth, min_treat_group_size=1,
             asmd_threshold_split=0,
             multiple_hypothesis_test_alpha=0.05,
