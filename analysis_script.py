@@ -14,7 +14,7 @@ import seaborn as sns
 import seaborn.objects as so
 import numpy as np
 from causallib.estimation import IPW, MarginalOutcomeEstimator
-from bicause_tree import BecauseTree, PropensityImbalanceStratification, \
+from bicause_tree import BICauseTree, PropensityImbalanceStratification, \
     PropensityStartaficationPropensity, crump, prevalence_symmetric
 from sklearn.metrics.cluster import adjusted_rand_score
 from sklearn.metrics import jaccard_score, brier_score_loss, roc_auc_score, mean_squared_error,\
@@ -28,7 +28,7 @@ from sklearn.calibration import calibration_curve
 import statsmodels.api as sm
 from scipy.interpolate import interp1d
 import seaborn.objects as so
-from causallib.evaluation.weight_evaluator import calculate_covariate_balance
+from causallib.metrics.weight_metrics import calculate_covariate_balance
 
 
 def get_data(dataset):
@@ -93,7 +93,7 @@ def compare_fit_effect(models_to_compare:dict, train_test_data):
         if not is_ground_truth:
             model_copy = deepcopy(model)
             model_copy.fit(*train_data)
-            if isinstance(model_copy, BecauseTree):
+            if isinstance(model_copy, BICauseTree):
                 propensity_model = PropensityStartaficationPropensity()
                 propensity_model.tree = model_copy.tree
                 propensity_model.fit_treatment_models(train_data[0], train_data[1])
@@ -186,7 +186,7 @@ def filter_results_by_positivity_violation(positivity_boot_mask, bootstrap_resul
 
 def compute_pscore(X, model):
 
-    if isinstance(model, BecauseTree):
+    if isinstance(model, BICauseTree):
         probas = model.propensity_model.predict_proba(X)[:,1]
     if isinstance(model, IPW):
         probas = model.compute_propensity(X, a=None, treatment_values=1)
@@ -275,8 +275,10 @@ def compute_filtered_effect(X, a, y, bootstrap_matrix, positivity_matrix, fitted
     return filtered_effects
 
 
-def box_plot_effect_difference(models_to_compare: dict, effects: list, plot_matching=True, plot_causal_tree=True,
-                               plot_test=True, path=None):
+def box_plot_effect_difference_data(
+    models_to_compare: dict,
+    effects: list,
+):
     ground_truth_index = list(models_to_compare.keys()).index("Ground truth")
     ground_truth_bootstrap_effects = []
     differences = effects
@@ -291,10 +293,19 @@ def box_plot_effect_difference(models_to_compare: dict, effects: list, plot_matc
     model_names = list(models_to_compare.keys())
     model_names.remove("Ground truth")
     columns_tuples = list(itertools.product(model_names, ["Train", "Test"]))
-    fig, ax = plt.subplots()
     effects_tp = pd.DataFrame(differences, columns=pd.MultiIndex.from_tuples(columns_tuples, names=["Model", "Phase"]))
     data = effects_tp.stack().stack().reset_index(level=[1, 2]).rename(columns={0: "Estimated ATE"})
+    return data
 
+
+def box_plot_effect_difference_plot(
+    data: pd.DataFrame,
+    plot_matching=True,
+    plot_causal_tree=True,
+    plot_test=True,
+    path=None
+):
+    fig, ax = plt.subplots()
     if not plot_test:
         data = data[data['Phase'] != "Test"]
     ax = sns.boxplot(data=data, y="Model", x="Estimated ATE", hue="Phase", ax=ax)
@@ -311,6 +322,28 @@ def box_plot_effect_difference(models_to_compare: dict, effects: list, plot_matc
     fig.show()
 
     return fig
+
+
+def box_plot_effect_difference(
+    models_to_compare: dict,
+    effects: list,
+    plot_matching=True,
+    plot_causal_tree=True,
+    plot_test=True,
+    path=None
+):
+    plot_data = box_plot_effect_difference_data(
+        models_to_compare, effects,
+    )
+    fig = box_plot_effect_difference_plot(
+        plot_data,
+        plot_matching=plot_matching,
+        plot_causal_tree=plot_causal_tree,
+        plot_test=plot_test,
+        path=path,
+    )
+    return fig
+
 
 def compute_jaccard_rand_score(X, bootstrap_matrix, tree_fitted_models, path=None):
 
@@ -372,7 +405,7 @@ def generate_bias(X, t, y, y1, y0, bootstrap_matrix, tree_model, on_train=True):
 def generate_bias_across_depth(X, t, y, y1, y0, bootstrap_matrix, model_depths, n_feat_to_plot=10, on_train=True, path=None):
     bias = {}
     for depth in [0] + model_depths:
-        tree_model = BecauseTree(
+        tree_model = BICauseTree(
             max_depth=depth, min_treat_group_size=1,
             asmd_threshold_split=0,
             multiple_hypothesis_test_alpha=0.05,

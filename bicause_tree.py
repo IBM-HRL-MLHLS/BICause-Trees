@@ -18,7 +18,6 @@ Created on Oct 26, 2021
 """
 from collections import deque
 from copy import deepcopy
-from causallib.estimation.base_weight import crump_cutoff, prevalence_symmetric_cutoff
 import numpy as np
 import pandas as pd
 from statsmodels.stats.multitest import multipletests
@@ -27,8 +26,8 @@ import warnings
 from sklearn.dummy import DummyClassifier
 
 from causallib.utils.general_tools import get_iterable_treatment_values
-from .base_estimator import PopulationOutcomeEstimator, IndividualOutcomeEstimator
-from .marginal_outcome import MarginalOutcomeEstimator
+from causallib.estimation.base_estimator import PopulationOutcomeEstimator, IndividualOutcomeEstimator
+from causallib.estimation.marginal_outcome import MarginalOutcomeEstimator
 
 
 
@@ -58,6 +57,32 @@ def default_stopping_criterion(tree, X: pd.DataFrame, a: pd.Series):
 
     return criteria
 
+
+def prevalence_symmetric_cutoff(prob, mu, alpha=0.1):
+    """
+    Computes a lower/upper cutoff based on the prevalence of
+    treatment in the cohort. Treatment should be binary.
+
+    Args:
+        mu (float): observed prevalence of treatment in the cohort
+        prob (pd.DataFrame): probability to be assigned to a group
+                          (n_samples, 2)
+                          For binary treatment each row is (1-p, p)
+        alpha (float): the fixed cutoff to be transformed, should be
+        strictly between 0 and 1
+
+    Returns: Tuple[float, float]: upper and lower cutoff
+    """
+    if prob.shape[1] > 2:
+        raise ValueError('This threshold selection method is applicable only '
+                         'for binary treatment assignment')
+    if not 0 < alpha < 1:
+        raise ValueError(f"`alpha` value should be in the open interval (0, 1). Got {alpha} instead.")
+    upper_cutoff = (1 - alpha)*mu / ((1-alpha)*mu + alpha*(1 - mu))
+    lower_cutoff = alpha*mu / (alpha*mu + (1 - alpha)*(1 - mu))
+    return lower_cutoff, upper_cutoff
+
+
 def prevalence_symmetric(tree, alpha=0.1):
 
     """
@@ -84,6 +109,42 @@ def prevalence_symmetric(tree, alpha=0.1):
     lower_cutoff, upper_cutoff= cutoffs[0], cutoffs[1]
     non_violating_nodes = leaf_summary['node_index'][leaf_summary['pscore'].between(lower_cutoff,upper_cutoff)].tolist()
     return non_violating_nodes
+
+
+def crump_cutoff(prob, segments=10000 ):
+    """
+    A systematic approach to find the optimal trimming cutoff, based on the
+    marginal distribution of the propensity score,
+    and according to a variance minimization criterion.
+    "Crump, R. K., Hotz, V. J., Imbens, G. W., & Mitnik, O. A. (2009).
+    Dealing with limited overlap in estimation of average treatment effects."
+    Treatment should be binary.
+    Args:
+        prob (pd.DataFrame): probability to be assigned to a group
+                          (n_samples, 2)
+        segments (int): number of exclusive segments of the interval (0, 0.5].
+                        more segments results with more precise cutoff
+    Returns:
+        float: the optimal cutoff,
+               i.e. the smallest value that satisfies the criterion.
+    """
+    # TODO: rethink input - probability_matrix, propensity_vector, or model + data
+    if prob.shape[1] > 2:
+        raise ValueError('This threshold selection method is applicable only '
+                         'for binary treatment assignment')
+    else:
+        propensities = prob.iloc[:, 1]
+
+    alphas = np.linspace(1e-7, 0.5, segments)
+    alphas_weights = alphas * (1 - alphas)
+    overlap_weights = propensities * (1 - propensities)
+    for i in range(segments):
+        obs_meets_criterion = overlap_weights >= alphas_weights[i]
+        criterion = 2 * (np.sum(obs_meets_criterion / overlap_weights) /
+                         np.maximum(np.sum(obs_meets_criterion), 1e-7))
+        if (1 / alphas_weights[i]) <= criterion:
+            return alphas[i], 1-alphas[i]
+    return None, None  # No overlap
 
 
 def crump(tree, segments=10000):
@@ -218,6 +279,7 @@ class BICauseTree(IndividualOutcomeEstimator):
         n_values=50,
         multiple_hypothesis_test_alpha=0.1,
         multiple_hypothesis_test_method='holm',
+        split_on_random_feature=False,
         positivity_filtering_kwargs={'alpha':0.1},
         stopping_criterion=default_stopping_criterion,
         positivity_filtering_method=prevalence_symmetric,
@@ -237,7 +299,8 @@ class BICauseTree(IndividualOutcomeEstimator):
                                                         min_treat_group_size=min_treat_group_size,
                                                         asmd_threshold_split=asmd_threshold_split,
                                                         positivity_filtering_method=positivity_filtering_method,
-                                                        positivity_filtering_kwargs=positivity_filtering_kwargs
+                                                        positivity_filtering_kwargs=positivity_filtering_kwargs,
+                                                      split_on_random_feature=split_on_random_feature,
                                                         ) 
         self.individual = individual
 
@@ -363,6 +426,7 @@ class PropensityImbalanceStratification(PopulationOutcomeEstimator):
         asmd_violation_threshold=0.1,
         max_depth=10,
         n_values=50,
+        split_on_random_feature=False,
         multiple_hypothesis_test_alpha=0.1,
         multiple_hypothesis_test_method='holm',
         positivity_filtering_kwargs=None,
@@ -406,6 +470,7 @@ class PropensityImbalanceStratification(PopulationOutcomeEstimator):
         self.keep_=False
         self.potential_outcomes_ = None
         self.violating_nodes = None
+        self.split_on_random_feature = split_on_random_feature
 
     def fit(self, X: pd.DataFrame, a: pd.Series):
         """
@@ -450,7 +515,11 @@ class PropensityImbalanceStratification(PopulationOutcomeEstimator):
         self.node_sample_size_=len(a)
         treatment_values = get_iterable_treatment_values(None, a)
         if not self.stopping_criterion(self, X, a):
-            self.split_feature_ = asmds.idxmax()
+            if self.split_on_random_feature:
+                self.split_feature_ = asmds.sample(n=1).index[0]
+                self.max_feature_asmd_ = asmds.loc[self.split_feature_]  # TODO: or just keep the max?
+            else:
+                self.split_feature_ = asmds.idxmax()
             self.split_value_ = self._find_split_value(X[self.split_feature_], a)
             # TODO: This method can be plugged-in to use other heuristics
             if np.isnan(self.split_value_):
@@ -488,7 +557,7 @@ class PropensityImbalanceStratification(PopulationOutcomeEstimator):
         """
         x_uniq = self._get_uniq_values(x)
         pvals = [self._fisher_test_pval(x, a, x_val) for x_val in x_uniq]
-        pvals = pd.Series(pvals, index=x_uniq).dropna()
+        pvals = pd.Series(pvals, index=x_uniq, dtype=float).dropna()
         if len(pvals) == 0:
             return np.nan
         self.pval_ = pvals.min()
